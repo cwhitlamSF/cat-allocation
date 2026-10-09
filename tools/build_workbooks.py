@@ -95,7 +95,7 @@ def build_template(path, example=None, vba=None):
     for j, (name, values) in enumerate(LISTS.items(), 1):
         lists.cell(1, j, name)
         for i, v in enumerate(values, 2):
-            lists.cell(i, j, v)
+            lists.cell(i, j, _value(v))          # TRUE/FALSE as real booleans
         col = get_column_letter(j)
         wb.defined_names[name] = DefinedName(name, attr_text=f"Lists!${col}$2:${col}${len(values) + 1}")
     lists.sheet_state = 'hidden'
