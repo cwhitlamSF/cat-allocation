@@ -2,19 +2,23 @@
 Builds the CCA workbooks from the layouts in cca_tables.py:
 
   CCA_ConfigSpecs.xlsx  spec definition tables read by config_creator -> CCA_config.ini
-  CCA_Template.xlsx     the input workbook users fill in, with dropdowns, and the result sheets
-  CCA_Example.xlsx      (--example) the template filled in for the sample data in example_data/
+  CCA_Template.xlsm     the input workbook users fill in, with dropdowns, the result sheets and the VBA
+  CCA_Example.xlsm      (--example) the template filled in for the sample data in example_data/
 
 The spec workbook and template are always generated together, so they can't drift apart.
 Rerun after changing cca_tables.py:
 
-    python tools/build_workbooks.py [--example]
+    python tools/build_workbooks.py [--example] [--vba vba/vbaProject.bin | --novba]
 
-After building, open CCA_Template.xlsx in Excel, import the VBA from vba/ (see README) and save it
-as CCA_Template.xlsm.
+The VBA project (the Run macro and the xlwings module) is copied in from vba/vbaProject.bin, so a
+rebuild keeps it. To change the VBA: edit it in Excel in CCA_Template.xlsm, then save the project back
+with  python tools/build_workbooks.py --save-vba CCA_Template.xlsm  (copies its vbaProject.bin to vba/).
+--novba writes .xlsx workbooks without VBA.
 """
 import os
 import sys
+import tempfile
+import zipfile
 
 import openpyxl
 from openpyxl.styles import Alignment, Font
@@ -27,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from cca_tables import LISTS, TABLES, RESULT_TABLES      # noqa: E402
+
+VBA_PROJECT = os.path.join(ROOT, 'vba', 'vbaProject.bin')
 
 VALIDATION_ROWS = 300
 NOTE_FONT = Font(italic=True, color='808080', size=9)
@@ -54,25 +60,27 @@ def _value(v):
 HOME_LINES = [
     'Allocates the upfront premium of the upper cat layers to individual policies, from RMS ELTs, without simulation.',
     '',
-    'Prepare the policy ELT once (and again whenever the RMS run changes):',
-    '  1. Prepare Data sheet: where the raw policy ELT is (Parquet chunks or a database query).',
-    '  2. General sheet: Run Type = Prepare Data; Policy ELT Folder = where the event-grouped files go. Click Run.',
+    '1. General: the output folder and where the event-grouped policy ELT files are.',
+    '2. Prepare Data (once per RMS run): where the raw policy ELT is; set Run Prepare Data to TRUE to build the',
+    '   event-grouped files on the next Run. Set it back to FALSE afterwards.',
+    '3. Specify Runs: one row per run, each with a Run Name and its method settings (distortion, basis, sharing,',
+    '   split, ...). One Run does every row with Include = TRUE; the data is read once for all of them.',
+    '4. Data Sources: the BU x region ELTs (gross and net of per-risk), the exposure data and the policy-to-LOB map.',
+    '5. Subjects: named sets of LOBs and regions that the layers apply to.',
+    '6. Inuring Layers: lower towers and the FHCF proxy, applied in Stage order before the upper layers.',
+    '7. Upper Layers: the layers whose premium is allocated (100% premium and placement; aggregate terms if used).',
     '',
-    'Allocate:',
-    '  1. Data Sources: the BU x region ELTs (gross and net of per-risk), the exposure data and the policy-to-LOB map.',
-    '  2. Subjects: named sets of LOBs and regions that the layers apply to.',
-    '  3. Inuring Layers: lower towers and the FHCF proxy, applied in Stage order before the upper layers.',
-    '  4. Upper Layers: the layers whose premium is allocated (100% premium and placement; aggregate terms if used).',
-    '  5. General: Run Type = Allocate, the method settings and the output folder. Click Run.',
-    '',
-    'Results: Layer Summary, LOB Summary, Diagnostics (and Benchmark, if switched on) on this workbook;',
-    'policy-level results as Parquet and CSV in the output folder (listed on the Output Log sheet).',
+    'Results: Run Summary (one row per run), Layer Summary, LOB Summary, Diagnostics and Benchmark, each with a',
+    'Run Name column; policy-level results in <Output Folder>/<Run Name>/, and all runs side by side in',
+    'premium_by_policy_all_runs.parquet. Files written are listed on the Output Log sheet.',
     'Problems found before or during the run are listed on the Data Issues sheet.',
     'Relative paths are relative to this workbook\'s folder.',
 ]
 
 
-def build_template(path, example=None):
+def build_template(path, example=None, vba=None):
+    """Write the template (or, with `example`, a filled-in copy). With `vba` (a vbaProject.bin),
+    the workbook is saved as .xlsm with that VBA project."""
     example = example or {}
     wb = openpyxl.Workbook()
     home = wb.active
@@ -153,7 +161,53 @@ def build_template(path, example=None):
     mp.column_dimensions['A'].width = 18
     mp.column_dimensions['B'].width = 60
     wb.defined_names['_executablepath'] = DefinedName('_executablepath', attr_text="'Model Path'!$B$1")
+    if vba:
+        _attach_vba(wb, vba)
     wb.save(path)
+
+
+def _attach_vba(wb, vba_bin):
+    """Give the workbook a VBA project. openpyxl writes a macro-enabled workbook (content types and
+    the vbaProject relationship) when vba_archive is set; the document modules in the project are
+    matched to sheets by code name, so the sheets get ThisWorkbook / Sheet1, Sheet2, ... as far as the
+    project has them (Excel adds modules for any further sheets)."""
+    tmp = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+    tmp.close()
+    with zipfile.ZipFile(tmp.name, 'w') as z:
+        z.write(vba_bin, 'xl/vbaProject.bin')
+        # openpyxl also reads these two parts from the archive (to carry over custom UI and
+        # content types); standard minimal versions
+        z.writestr('[Content_Types].xml',
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="xml" ContentType="application/xml"/></Types>')
+        z.writestr('_rels/.rels',
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                   'relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+    n_modules = _document_modules(vba_bin)
+    wb.vba_archive = zipfile.ZipFile(tmp.name)
+    wb.code_name = 'ThisWorkbook'
+    for i, ws in enumerate(wb.worksheets, 1):
+        if i <= n_modules:
+            ws.sheet_properties.codeName = f'Sheet{i}'
+
+
+def _document_modules(vba_bin):
+    """Number of SheetN document modules in a vbaProject.bin (by stream name)."""
+    try:
+        import olefile
+        ole = olefile.OleFileIO(vba_bin)
+        names = {e[-1] for e in ole.listdir() if len(e) == 2 and e[0] == 'VBA'}
+        n = 0
+        while f'Sheet{n + 1}' in names:
+            n += 1
+        return n
+    except Exception:
+        return 0
 
 
 def build_spec_workbook(path):
@@ -184,11 +238,20 @@ def build_spec_workbook(path):
 
 # The worked example: the synthetic book written by tools/make_example_data.py into example_data/
 EXAMPLE = {
-    'GeneralSpecs': {'Run Name': 'Example allocation', 'Output Folder': 'example_data/output',
-                     'Policy ELT Folder': 'example_data/ev_buckets', 'Benchmark Comparison': 'TRUE'},
-    'PrepareSpecs': {'Source Type': 'Parquet Files', 'Input Folder': 'example_data/raw_policy_elt',
+    'GeneralSpecs': {'Output Folder': 'example_data/output', 'Policy ELT Folder': 'example_data/ev_buckets',
+                     'Notes': 'Built by tools/build_workbooks.py --example'},
+    'PrepareSpecs': {'Run Prepare Data': 'TRUE', 'Source Type': 'Parquet Files', 'Input Folder': 'example_data/raw_policy_elt',
                      'Input File Pattern': 'chunk_*.parquet', 'Target Rows Per File': '20000',
                      'Column Renames': 'Loss=PERSPVALUE'},
+    'SpecifyRuns': [
+        # Run Name, Include, Distortion, Basis, Inuring Sharing, Policy Split, Bounded, Clamp, RP, Benchmark, Grid, Comments
+        ['Base', 'TRUE', 'wang', 'occurrence', 'conditional', 'conditional', 'TRUE', 'FALSE', 'TRUE', 'TRUE', 500, 'Recommended method'],
+        ['PH sensitivity', 'TRUE', 'ph', 'occurrence', 'conditional', 'conditional', 'TRUE', 'FALSE', 'TRUE', 'FALSE', 500, None],
+        ['Aggregate basis', 'TRUE', 'wang', 'aggregate', 'conditional', 'conditional', 'TRUE', 'FALSE', 'TRUE', 'FALSE', 500, None],
+        ['Pro rata sharing', 'TRUE', 'wang', 'occurrence', 'prorata', 'conditional', 'TRUE', 'FALSE', 'TRUE', 'FALSE', 500, None],
+        ['Mean split', 'TRUE', 'wang', 'occurrence', 'conditional', 'mean', 'TRUE', 'FALSE', 'TRUE', 'FALSE', 500, 'Same lookups as Base'],
+        ['Not run', 'FALSE', 'identity', None, None, None, None, None, None, None, None, 'Include = FALSE'],
+    ],
     'DataSources': [
         ['BU ELT Gross', 'Parquet', 'example_data/bu_elt_gross.parquet'],
         ['BU ELT Net', 'Parquet', 'example_data/bu_elt_net.parquet'],
@@ -215,10 +278,27 @@ EXAMPLE = {
 }
 
 
+def save_vba(xlsm):
+    """Copy the VBA project out of an .xlsm into vba/vbaProject.bin (after editing the VBA in Excel)."""
+    with zipfile.ZipFile(xlsm) as z:
+        data = z.read('xl/vbaProject.bin')
+    with open(VBA_PROJECT, 'wb') as f:
+        f.write(data)
+    return VBA_PROJECT
+
+
 if __name__ == '__main__':
+    args = sys.argv[1:]
+    if '--save-vba' in args:
+        print('Wrote', save_vba(args[args.index('--save-vba') + 1]))
+        sys.exit(0)
+    vba = None if '--novba' in args else (args[args.index('--vba') + 1] if '--vba' in args else VBA_PROJECT)
+    if vba and not os.path.exists(vba):
+        sys.exit(f"No VBA project at {vba}: pass --vba <vbaProject.bin> or --novba")
+    ext = '.xlsm' if vba else '.xlsx'
     build_spec_workbook(os.path.join(ROOT, 'CCA_ConfigSpecs.xlsx'))
-    build_template(os.path.join(ROOT, 'CCA_Template.xlsx'))
-    print('Wrote CCA_ConfigSpecs.xlsx and CCA_Template.xlsx')
-    if '--example' in sys.argv:
-        build_template(os.path.join(ROOT, 'CCA_Example.xlsx'), EXAMPLE)
-        print('Wrote CCA_Example.xlsx')
+    build_template(os.path.join(ROOT, 'CCA_Template' + ext), vba=vba)
+    print(f'Wrote CCA_ConfigSpecs.xlsx and CCA_Template{ext}')
+    if '--example' in args:
+        build_template(os.path.join(ROOT, 'CCA_Example' + ext), EXAMPLE, vba=vba)
+        print(f'Wrote CCA_Example{ext}')
