@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+output/
+example_data/output/
+example_data/ev_buckets/
+*.log
+data_warnings.csv
+C__*/
+~$*

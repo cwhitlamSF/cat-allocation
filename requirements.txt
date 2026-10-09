@@ -1,0 +1,12 @@
+# Cat Cost Allocation (CCA)
+polars>=1.20,<2        # shared-lib's spec reader fails on Polars 2.0 (configTables)
+numpy
+scipy
+pyarrow
+pandas
+python-calamine
+fastexcel
+xlwings
+openpyxl               # tools/build_workbooks.py only
+# only when used
+# sqlalchemy + the database driver (e.g. pyodbc)   Database Query sources / Prepare Data from a query

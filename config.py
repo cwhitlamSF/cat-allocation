@@ -1,0 +1,9 @@
+MODELTYPE = 'Cat Cost Allocation'
+MODELPREFIX = 'CCA'
+MODELFILENAMEPREFIX = "CatCostAllocation"
+ADDITIONAL_DATAS = []
+VERSIONSUFFIX = "_v1_0"
+INCLUDEPANEL = False
+DEVELOPERMODE = False
+SUCCESSNOTE_EXCEL = "Results are on the Layer Summary, LOB Summary and Diagnostics sheets; files written are on the Output Log sheet."
+SUCCESSNOTE_NOEXCEL = "Results are in the output folder."
