@@ -8,5 +8,6 @@ python-calamine
 fastexcel
 xlwings
 openpyxl               # tools/build_workbooks.py only
+olefile                # tools/build_workbooks.py only (reads the VBA project)
 # only when used
 # sqlalchemy + the database driver (e.g. pyodbc)   Database Query sources / Prepare Data from a query
